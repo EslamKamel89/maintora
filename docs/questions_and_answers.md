@@ -122,3 +122,66 @@
 - **Confirmed:** Configurable per-asset/combined work-order generation; same-customer asset membership in each plan; one lead technician plus contributors; partial payments, credit notes, and refunds; configurable tax rules without government integrations.
 - **Still open:** Whether combined work orders may span sites; inspection response granularity; contract coverage for multi-asset plans; lead replacement/acceptance; invoice issuance/immutability and payment allocation; tax rounding/inclusivity; refund processing boundaries; subscription/trial and retention details.
 - **Change control:** These clarifications extend the intended MVP and conflict with portions of `SPEC.md` v1.0 (especially single-asset work orders, single assignee, and invoicing as deferred). Update `SPEC.md` explicitly before implementation. No code, migration, or GitHub modification is implied by this report.
+
+## Batch 3 — Execution Boundaries, Inspections, and Financial Documents
+
+**Date:** 2026-11-03  
+**Source:** Interactive requirements clarification, Batch 3  
+**Status:** Confirmed by product owner; `SPEC.md` revisions proposed, not applied.  
+**Repository baseline:** `EslamKamel89/maintora`, branch `main`; `SPEC.md` blob `52892cf089d74c1561dc40913dad0d4c691bd2c9`. Existing Q&A contains Batches 1 and 2.
+
+### Q11 — Combined work orders across sites
+
+**Question:** Can a single combined work order include assets at different sites belonging to the same customer?
+
+**Answer (A):** Yes, across multiple sites of the same customer.
+
+**Implementation implications:** A combined work order cannot rely on a single `site` and `asset` foreign key as its complete coverage representation. Use a work-order-to-asset association, retaining each asset's site and validating one customer and one tenant across all covered assets. Any primary site field must be clearly informational rather than an exclusive scope restriction. Define site-level scheduling, technician visibility, and completion/evidence tracking for multi-site work. Snapshot covered assets/sites at generation so later changes do not rewrite history. Do not infer that cross-customer work orders are allowed.
+
+**SPEC.md changes required:** Update FR-05 and FR-06 (multi-site work-order coverage), section 6 (work-order relationships and cross-customer invariants), section 7.2 (generation), section 7.3 (execution), and Phase 4 acceptance tests. Replace assumptions that a work order always has exactly one site and asset.
+
+### Q12 — Inspection checklist granularity
+
+**Question:** When one work order covers multiple assets, how should inspection responses be recorded?
+
+**Answer (C):** Support both asset-specific and shared checklists.
+
+**Implementation implications:** Distinguish inspection instances scoped to a work order from instances scoped to a particular covered asset. A shared checklist applies to the overall job; asset-specific checklists apply independently to each selected asset. Preserve the immutable published template version for every instance, respondent and timestamps for answers, and tenant/asset authorization for attachments. Define which checklists are mandatory before the lead technician can submit completion. Prevent answers from being attached to assets outside the work order. Versioned checklist templates remain industry-configurable.
+
+**SPEC.md changes required:** Extend FR-07 with explicit checklist scope and completion rules; update FR-06 completion validation, section 6 inspection associations/invariants, section 7.3 execution, and Phase 4 verification. Add tests for mixed shared/asset-specific inspections and required-answer enforcement.
+
+### Q13 — Contract coverage for maintenance plans
+
+**Question:** How should maintenance plans interact with contracts?
+
+**Answer (C):** Plans may exist independently, but contract-linked plans must only generate work within valid coverage.
+
+**Implementation implications:** Keep the contract relationship optional. For contract-linked plans, validate tenant, customer, covered assets, contract status, and applicable coverage dates before generating each occurrence. A multi-asset plan with partial contract coverage must not silently produce unauthorized work; define whether to reject the plan, skip uncovered assets, or split occurrences in a later decision. Standalone plans remain allowed. Preserve historical work orders after expiration/termination and make generation idempotent under retries.
+
+**SPEC.md changes required:** Clarify FR-04 and FR-05 optional contract linkage and coverage rules, FR-06 order consistency, section 6 cross-entity invariants, and section 7.2 generation behavior. This largely confirms the existing optional-contract direction but requires explicit multi-asset behavior.
+
+### Q14 — Invoice issuance and editing
+
+**Question:** What should happen after an invoice is officially issued?
+
+**Answer (B):** Lock issued invoices; corrections use credit notes and replacement invoices.
+
+**Implementation implications:** Introduce a draft-to-issued transition. Issued invoice details, tax snapshots, totals, customer identity, and invoice number must be immutable through normal edit paths. Corrections require traceable credit notes and, where needed, replacement invoices linked to the original. Enforce status transitions in transactional services with authorization and audit records. Payments and refunds are separate append-only financial events or auditable transactions; do not modify historical invoice amounts to reflect them. Define partial credit notes and numbering policies in later batches.
+
+**SPEC.md changes required:** Add explicit issuance, immutability, correction, and audit rules to a new customer-billing functional requirement and section 6 invariants. Extend sections 7, 9, 11, and 13 with billing workflows, exports, and tests. Remove customer invoicing from the blanket deferred list in section 14 while keeping regulated e-invoicing and full accounting deferred.
+
+### Q15 — Refund processing
+
+**Question:** Should Maintora actually transfer money to customers when processing refunds?
+
+**Answer (A):** Record refunds performed outside Maintora (bank transfer, cash, etc.).
+
+**Implementation implications:** Maintainora records a refund's amount, currency, date, method, reference, actor, reason, and links to the relevant payment/customer; it does not initiate a bank transfer or payment-provider refund. Validate refundable balances, prevent double recording with appropriate unique external references or idempotency controls, and preserve audit history. Marking a refund recorded must not imply that money moved through the platform. Distinguish credit notes (invoice adjustment) from refunds (money returned).
+
+**SPEC.md changes required:** Clarify the new customer-billing requirement and financial workflow in section 7; add refund authorization, integrity, and audit rules in sections 6 and 9. Keep payment disbursement integrations deferred in section 14; FR-11 SaaS subscription billing remains a separate domain.
+
+### Consolidated decisions and remaining questions
+
+- **Confirmed:** Combined work orders may span multiple sites of one customer; shared and asset-specific inspections both supported; contract linkage optional but linked work strictly constrained by coverage; issued invoices immutable with credit-note/replacement corrections; refunds recorded externally only.
+- **Unresolved:** Multi-site work-order scheduling/closure semantics; mandatory checklist selection and whether asset-specific checklists are required for every asset; behavior when only some assets have valid contract coverage; lead reassignment; invoice credit-note/partial-payment allocation, tax inclusivity/rounding, and numbering; subscription limits and retention.
+- **Change control:** These decisions are requirements clarifications, not evidence of implemented code. Update `SPEC.md` explicitly before implementation; preserve tenant isolation, append-only audit, concurrency safety, and idempotent scheduling. This report is an independent Markdown section intended to be appended, not to replace earlier batches.
