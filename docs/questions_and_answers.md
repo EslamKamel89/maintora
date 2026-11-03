@@ -248,3 +248,66 @@
 - **Confirmed:** Partial contract coverage filters eligible assets rather than rejecting a plan; combined multi-site orders share one schedule; managers choose mandatory inspections per order; unavailable leads require explicit manager reassignment; plan edits apply only to future ungenerated occurrences.
 - **Still open:** What happens if coverage expands after a partially generated occurrence; whether combined work orders track progress by site; when mandatory inspection assignments may change; how to handle contract expiration during an in-progress order; invoice/payment allocation, tax calculation details, subscription limits, and retention.
 - **Change control:** This section is append-only and does not modify `SPEC.md` or code. Before implementing affected workflows, revise `SPEC.md` to reconcile its original single-asset/single-site assumptions and retain tenant isolation, transaction safety, idempotency, and auditability.
+
+## Batch 5 — Scheduling Exceptions and Inspection Controls
+
+**Date:** 2026-11-03  
+**Source:** Interactive requirements clarification, Batch 5  
+**Status:** Product-owner decisions confirmed; `SPEC.md` revisions proposed, not applied.  
+**Repository baseline:** `EslamKamel89/maintora`, `main`; `SPEC.md` blob `52892cf089d74c1561dc40913dad0d4c691bd2c9`. Existing Q&A verified through Batch 4.
+
+### Q21 — Newly covered assets after scheduling
+
+**Question:** A plan covers 10 assets. The scheduler generated work for 8 covered assets. Later, the remaining 2 become contract-covered for the same occurrence. What should happen?
+
+**Answer (C):** Require manager approval to generate the missing work.
+
+**Implementation implications:** Persist an occurrence-level eligibility snapshot or exclusion record identifying uncovered assets and reasons. On later coverage changes, expose eligible missing assets for explicit manager approval; do not silently regenerate them. Approval must revalidate tenant, customer, current contract coverage, and whether the same asset/occurrence was already generated. For per-asset mode, create only missing asset orders using a unique `(company, plan, occurrence, asset)` identity. For combined mode, preserve the already generated order snapshot (Q20): a manager-approved supplemental order or other explicit non-mutating mechanism is required; exact supplemental-order semantics remain to be defined. Use transactions and uniqueness guards to prevent duplicate work under concurrent approval/scheduler retries. Audit approval, rejection, and resulting orders.
+
+**`SPEC.md` changes:** FR-04 contract coverage, FR-05 generation/eligibility, FR-06 order associations, section 6 occurrence uniqueness, section 7.2 scheduling and exception approvals, section 9 audit, and section 12 concurrency tests. Add an explicit manual backfill rule without contradicting Q20.
+
+### Q22 — Multi-site work-order progress
+
+**Question:** A combined work order covers assets at three sites. How should progress be tracked?
+
+**Answer (C):** Separate progress/status for each asset plus overall status.
+
+**Implementation implications:** Model an asset-level work item or equivalent association carrying per-asset execution status, linked inspections, and evidence. A combined order has one overall status and one scheduled/due date (Q17), but assets can progress independently. Define and enforce a deterministic aggregation rule for overall completion; the lead technician controls final submission (Q8), and mandatory inspection checks follow manager configuration (Q18). Preserve individual asset history and enforce same-company/same-customer boundaries even across sites. Exact asset-level states and cancellation/partial-failure semantics remain open.
+
+**`SPEC.md` changes:** FR-06 work-order lifecycle and multi-asset data model, FR-07 inspection association, FR-08 technician views, section 6 invariants, section 7.3 execution, section 11 reporting, and section 12 workflow tests.
+
+### Q23 — Changing mandatory inspections
+
+**Question:** When may a manager change which inspections are mandatory for an existing work order?
+
+**Answer (A):** Only before technicians start work.
+
+**Implementation implications:** Managers can assign/change mandatory shared and asset-specific inspections only while the work order has not entered `in_progress` (or another explicitly defined execution-start state). At the start transition, freeze required inspection assignments and published template versions. Validate this boundary in a transaction with locking so a concurrent manager edit cannot race the technician's start action. Reject later changes through normal workflows; any future correction process requires a separate decision. Audit pre-start edits and the freeze event.
+
+**`SPEC.md` changes:** FR-06 transition guards, FR-07 checklist assignment and snapshot rules, section 5 authorization, section 6 immutability invariants, section 7.3 workflow, and section 12 concurrency/negative tests.
+
+### Q24 — Contract expiration during execution
+
+**Question:** A work order was validly generated while a contract was active, but the contract expires before technicians finish. What happens?
+
+**Answer (A):** Allow the existing work order to finish normally.
+
+**Implementation implications:** Validate contract status, coverage, and applicable dates when generating or explicitly approving new preventive work; do not retroactively invalidate an existing valid work order solely because its contract later expires. Continue normal authorized execution, inspection, completion, and manager closure. Retain the original contract reference and coverage snapshot for audit. Expiration must still prevent _new_ out-of-coverage occurrences, subject to the separately specified eligibility rules. Contract termination or cancellation effects are not resolved by this answer.
+
+**`SPEC.md` changes:** FR-04 expiration semantics, FR-05 generation eligibility, FR-06 completion rules, section 7.2 scheduler checks, section 7.3 execution, and section 12 tests across the expiration boundary.
+
+### Q25 — Overdue preventive maintenance
+
+**Question:** If a scheduled maintenance occurrence is missed, how should the next recurrence be calculated?
+
+**Answer (C):** Allow the company to choose fixed-schedule or completion-based recurrence per plan.
+
+**Implementation implications:** Provide a plan-level recurrence anchor/mode, configurable under company policy: `fixed_schedule` calculates future dates from the original calendar anchor independently of actual completion; `completion_based` calculates the next due occurrence from actual completion. Preserve calendar-month clamping and tenant-local dates. Completion-based plans require an explicit policy for incomplete/cancelled orders, whether multiple open occurrences may coexist, and how combined-order completion affects the next date. Make recurrence updates transactional and idempotent, avoiding duplicate or skipped occurrences during retries and concurrent completion. Q20 still requires existing generated orders to remain unchanged when the plan is edited.
+
+**`SPEC.md` changes:** FR-05 recurrence rules and cursor semantics, FR-06 completion events, section 6 uniqueness/invariants, section 7.2 generation, section 8 Celery execution, and section 12 recurrence/concurrency tests. Update the Phase 3 acceptance criteria accordingly.
+
+### Consolidated decisions and follow-up questions
+
+- **Confirmed:** Manual manager approval for backfilling newly covered assets; asset-level progress within combined orders; mandatory-inspection edits only before work starts; contract expiry does not interrupt valid existing work; fixed-schedule and completion-based recurrence configurable per plan.
+- **Still open:** Supplemental orders for previously generated combined occurrences; exact asset-level states and aggregate completion; effect of contract termination (distinct from natural expiry); completion-based recurrence after cancellation or noncompletion; invoice allocations, taxes, and SaaS subscription policies.
+- **Change control:** These are product requirements, not implemented behavior. The verified `SPEC.md` v1.0 has not yet incorporated Batches 1–5. Update it before implementing dependent features. Preserve tenant isolation, audit trails, immutable historical work orders, and idempotency under concurrency.
