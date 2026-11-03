@@ -185,3 +185,66 @@
 - **Confirmed:** Combined work orders may span multiple sites of one customer; shared and asset-specific inspections both supported; contract linkage optional but linked work strictly constrained by coverage; issued invoices immutable with credit-note/replacement corrections; refunds recorded externally only.
 - **Unresolved:** Multi-site work-order scheduling/closure semantics; mandatory checklist selection and whether asset-specific checklists are required for every asset; behavior when only some assets have valid contract coverage; lead reassignment; invoice credit-note/partial-payment allocation, tax inclusivity/rounding, and numbering; subscription limits and retention.
 - **Change control:** These decisions are requirements clarifications, not evidence of implemented code. Update `SPEC.md` explicitly before implementation; preserve tenant isolation, append-only audit, concurrency safety, and idempotent scheduling. This report is an independent Markdown section intended to be appended, not to replace earlier batches.
+
+## Batch 4 — Scheduling, Contract Coverage, and Completion Rules
+
+**Date:** 2026-11-03  
+**Source:** Interactive requirements clarification, Batch 4  
+**Status:** Product-owner decisions confirmed; `SPEC.md` revisions proposed, not applied.  
+**Repository baseline:** `EslamKamel89/maintora`, `main`; `SPEC.md` blob `52892cf089d74c1561dc40913dad0d4c691bd2c9`. Existing Q&A through Batch 3 verified.
+
+### Q16 — Partial contract coverage
+
+**Question:** A maintenance plan covers 10 assets, but the linked contract covers only 8. What should Maintora do?
+
+**Answer (B):** Generate work orders only for the 8 covered assets.
+
+**Implementation implications:** Preserve the full plan asset membership but compute eligible assets per scheduled occurrence based on contract/customer/tenant ownership, contract status, effective dates, and asset coverage. In per-asset generation mode, create orders only for eligible assets; in combined mode, create a combined order containing only the eligible subset. If no assets qualify, generate no work order. Record which assets were excluded and why in scheduler results so silent omission does not conceal missed service. Snapshot the eligible asset set on generated orders. Idempotency must prevent duplicate generation under retries even when coverage changes; define an explicit policy for newly eligible assets after an occurrence has already been generated (still open). Validate cross-tenant and cross-customer relationships regardless of coverage.
+
+**SPEC.md revisions:** FR-04 contract coverage; FR-05 scheduling and partial eligibility; FR-06 multi-asset work orders; section 6 uniqueness/invariants; section 7.2 scheduler workflow; section 12 scheduling tests. Replace any all-assets-or-nothing assumption with the confirmed skip-uncovered policy.
+
+### Q17 — Multi-site work-order scheduling
+
+**Question:** A combined work order includes assets at several sites. How should scheduling work?
+
+**Answer (A):** One overall scheduled date and due date for the entire work order.
+
+**Implementation implications:** Store a single scheduled date and due date on the work order, while retaining separate site/asset associations for execution, inspection evidence, and access checks. A multi-site work order does not imply individual site-level due dates in MVP. Clarify whether site-level progress is tracked separately from the overall work-order status in a later decision. Due-date calculations must use the tenant's configured time zone.
+
+**SPEC.md revisions:** FR-06 work-order fields must no longer require exactly one site/asset for combined orders; section 6 relationships and section 7.3 execution must support multi-site associations. Clarify shared scheduling fields and add multi-site validation tests.
+
+### Q18 — Mandatory inspections
+
+**Question:** For a work order covering multiple assets, which inspections must be completed before the lead technician can submit completion?
+
+**Answer (C):** Manager configures which inspections are mandatory for each work order.
+
+**Implementation implications:** Allow managers to select applicable shared and asset-specific published checklist versions, and mark which assigned inspections are mandatory. The completion service must verify every _configured mandatory_ inspection is satisfied before allowing lead-technician completion; optional inspections may remain incomplete. Snapshot the checklist version, asset/work-order association, and required status so later template changes do not alter existing obligations. Do not interpret this choice as permission to bypass requirements once the work order is in progress; authorization and timing for modifying mandatory assignments require a later decision. Record all modifications in the audit trail.
+
+**SPEC.md revisions:** FR-06 completion requirements; FR-07 inspection assignments/versioning; section 5 manager versus technician permissions; section 6 inspection associations and invariants; section 7.3 completion workflow. Add tests for optional versus mandatory shared/asset inspections, permissions, and immutability of published versions.
+
+### Q19 — Lead technician availability
+
+**Question:** What happens if the lead technician is unavailable or their membership is deactivated?
+
+**Answer (A):** A manager must explicitly assign a new lead.
+
+**Implementation implications:** Never automatically promote contributors or grant them lead-only completion authority. Block lead-only transitions while no eligible active lead exists; allow authorized manager/owner reassignment, preserving previous assignment history and audit actor/time. Validate that the new lead has active membership in the correct company and is assigned to the work order. Decide later whether an owner/admin can directly submit completion when no lead is available; existing role permissions should not be silently expanded.
+
+**SPEC.md revisions:** FR-06 and FR-08 assignments/actions; section 5 authorization matrix; section 6 assignment invariants; section 7.3 lead handover; section 9 audit. Test deactivated lead, cross-tenant reassignment, and contributor completion denial.
+
+### Q20 — Recurring maintenance plan modifications
+
+**Question:** If a manager changes the assets, frequency, or schedule of an active maintenance plan, what should happen to already generated work orders?
+
+**Answer (A):** Preserve generated work orders; changes affect future occurrences only.
+
+**Implementation implications:** Treat generated work orders as historical snapshots of the plan and covered assets at creation. Editing a plan must not mutate or delete existing scheduled, assigned, in-progress, or completed orders. Version or audit meaningful plan changes, and recalculate only future ungenerated occurrences. Preserve deterministic occurrence identity and use transactions/locking so concurrent edits and scheduler runs cannot create duplicates or skip due work. Explicit manual edits to an existing work order, if allowed, are separate authorized/audited actions rather than implicit plan synchronization.
+
+**SPEC.md revisions:** FR-05 recurrence/editing; FR-06 historical order snapshot; section 6 immutable occurrence identity; section 7.2 scheduler cursor and edit concurrency; section 9 audit; section 12 concurrency/integrity tests.
+
+### Cross-batch consistency and outstanding decisions
+
+- **Confirmed:** Partial contract coverage filters eligible assets rather than rejecting a plan; combined multi-site orders share one schedule; managers choose mandatory inspections per order; unavailable leads require explicit manager reassignment; plan edits apply only to future ungenerated occurrences.
+- **Still open:** What happens if coverage expands after a partially generated occurrence; whether combined work orders track progress by site; when mandatory inspection assignments may change; how to handle contract expiration during an in-progress order; invoice/payment allocation, tax calculation details, subscription limits, and retention.
+- **Change control:** This section is append-only and does not modify `SPEC.md` or code. Before implementing affected workflows, revise `SPEC.md` to reconcile its original single-asset/single-site assumptions and retain tenant isolation, transaction safety, idempotency, and auditability.
