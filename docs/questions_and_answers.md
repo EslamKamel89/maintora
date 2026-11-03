@@ -59,3 +59,66 @@
 - Confirmed: Gulf-wide configurable product; maintenance-industry flexibility; single- and multi-asset plans; multiple work-order technicians; customer invoicing and payment tracking.
 - Unresolved: group-plan work-order cardinality; group asset/customer boundaries; team completion authority; invoice/payment lifecycle; tax treatment; initial commercial jurisdiction.
 - **Change control:** These decisions amend the intended requirements but do not themselves modify `SPEC.md`, migrations, or application code. Update `SPEC.md` before implementing affected features, preserving existing tenant isolation, audit, and idempotency requirements.
+
+## Batch 2 — Maintenance Workflows and Financial Rules
+
+**Date:** 2026-11-03  
+**Source:** Interactive requirements clarification, Batch 2  
+**Status:** Confirmed by product owner; `SPEC.md` updates proposed, not yet applied.  
+**Baseline checked:** `main` branch, `SPEC.md` (blob `52892cf089d74c1561dc40913dad0d4c691bd2c9`); existing `docs/questions_and_answers.md` includes Batch 1.
+
+### Q6 — Multi-asset maintenance plans
+
+**Question:** When a maintenance plan covers 10 assets and becomes due, how should the system generate work orders?
+
+**Answer (C):** Support both, configurable per plan.
+
+**Implementation implications:** Introduce an explicit generation mode (`per_asset` or `combined`) on the plan. Per-asset mode generates one work order per covered asset per occurrence; combined mode generates one work order with multiple covered assets. Work-order/asset associations must support multiple assets, while preserving site/customer consistency and inspection evidence attributable to the correct asset. Define deterministic idempotency keys: `(company, plan, occurrence, asset)` for per-asset orders and `(company, plan, occurrence)` for combined orders, or equivalent explicit source keys with database constraints. Snapshot planned coverage at generation to avoid changing historical work orders when plan membership changes. Plan edits must not silently duplicate or remove already generated occurrences.
+
+**SPEC.md updates:** Revise FR-05 and FR-06; replace section 6 invariant 6's single uniqueness assumption with generation-mode-aware constraints; revise sections 7.2 and 13 Phase 3; replace section 15 item 3 with the confirmed policy. Clarify checklist response ownership and mixed-site combined orders in a future batch.
+
+### Q7 — Assets belonging to different customers
+
+**Question:** Can one maintenance plan contain assets from multiple customers?
+
+**Answer (A):** No. All assets must belong to the same customer.
+
+**Implementation implications:** Each plan has one owning customer; every included asset must be at a site belonging to that customer and the same tenant. Validate both initial selection and subsequent changes to asset/site/customer associations. Enforce through tenant-scoped services, transactional workflows, and database protections where feasible. A plan may cover multiple sites of the same customer unless a later decision restricts it. Contract-backed plans must additionally validate contract customer and coverage for all included assets.
+
+**SPEC.md updates:** Add the same-customer plan invariant to FR-05 and section 6; extend FR-02/FR-04 relationship validation, section 7.2 generation checks, and tenant/cross-customer negative tests.
+
+### Q8 — Multiple technician responsibilities
+
+**Question:** How should work-order execution work when several technicians are assigned?
+
+**Answer (B):** One lead technician controls completion; others contribute.
+
+**Implementation implications:** Model multiple tenant-scoped work-order assignments with a designated lead; ensure no more than one active lead per work order through appropriate constraints. Assigned contributors may record authorized notes/checklist/evidence; only the lead may submit technician completion, subject to checklist requirements. Manager review/closure remains a separate permission per FR-06. Preserve assignment history and audit lead reassignment. Define how the system behaves if the lead is deactivated or unavailable; do not implicitly grant all contributors completion rights.
+
+**SPEC.md updates:** Revise FR-06, FR-08, authorization matrix in section 5, section 6 assignment models/invariants, section 7.3, and section 15 item 5. Test lead-only completion, contributor edits, reassignment, and inactive memberships.
+
+### Q9 — Invoice and payment management
+
+**Question:** Which invoice/payment workflow should Maintora support?
+
+**Answer (B):** Invoices, partial payments, credit notes, and refunds.
+
+**Implementation implications:** Add a bounded customer-billing domain distinct from SaaS subscription billing. Track invoice numbering, currency, status, line items/taxes, amounts due, partial payment allocation, credit notes referencing issued invoices, and refunds referencing eligible payments. Use decimal money amounts and transaction-safe balance updates; audit financial actions and avoid destructive edits to issued documents. Define whether refunds represent recorded external transactions or actual payment-provider disbursements; no external money movement is implied by this answer. Full general ledger/accounting and regulated e-invoicing remain excluded unless explicitly approved.
+
+**SPEC.md updates:** Add a customer invoicing/payment functional requirement, and update section 1 non-goals, sections 6 (models/invariants), 7 (financial workflows), 9 (audit/security), 11 (exports), 13 (phases), 14 (deferred features), and 15 item 4. Keep FR-11 SaaS subscriptions separate.
+
+### Q10 — Multi-country taxation
+
+**Question:** How should Maintora handle different tax requirements across Gulf countries?
+
+**Answer (B):** Configurable tax rules per country/company, without government integrations.
+
+**Implementation implications:** Store company/country tax configuration with effective dates where appropriate; calculate invoice taxes from configured rules and snapshot applied rates/amounts on issued documents. Support exemptions or zero rates when configured, and maintain an auditable record of overrides. Configuration is not a guarantee of legal compliance. Do not hardcode Gulf-wide rates or promise government e-invoicing submissions. Define whether invoices can carry multiple tax components and how tax-inclusive pricing and rounding behave in a later batch.
+
+**SPEC.md updates:** Add taxation requirements to the new customer-billing section, revise section 10 localization and section 9 jurisdiction-specific legal review, and retain regulated e-invoicing as deferred in section 14.
+
+### Cross-cutting decisions and remaining questions
+
+- **Confirmed:** Configurable per-asset/combined work-order generation; same-customer asset membership in each plan; one lead technician plus contributors; partial payments, credit notes, and refunds; configurable tax rules without government integrations.
+- **Still open:** Whether combined work orders may span sites; inspection response granularity; contract coverage for multi-asset plans; lead replacement/acceptance; invoice issuance/immutability and payment allocation; tax rounding/inclusivity; refund processing boundaries; subscription/trial and retention details.
+- **Change control:** These clarifications extend the intended MVP and conflict with portions of `SPEC.md` v1.0 (especially single-asset work orders, single assignee, and invoicing as deferred). Update `SPEC.md` explicitly before implementation. No code, migration, or GitHub modification is implied by this report.
